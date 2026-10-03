@@ -16,7 +16,8 @@ import {
   sideViewState,
   tasklistState,
   threadIdToResumeState,
-  tokenCountState
+  tokenCountState,
+  unavailableThreadIdState
 } from 'src/state';
 import { IFileRef, IStep } from 'src/types';
 import { addMessage } from 'src/utils/message';
@@ -35,6 +36,7 @@ const useChatInteract = () => {
   const resetChatSettings = useResetRecoilState(chatSettingsInputsState);
   const resetSessionId = useResetRecoilState(sessionIdState);
   const resetChatSettingsValue = useResetRecoilState(chatSettingsValueState);
+  const resetUnavailableThread = useResetRecoilState(unavailableThreadIdState);
 
   const setFirstUserInteraction = useSetRecoilState(firstUserInteraction);
   const setLoading = useSetRecoilState(loadingState);
@@ -49,6 +51,7 @@ const useChatInteract = () => {
   const setFavoriteMessages = useSetRecoilState(favoriteMessagesState);
 
   const clear = useCallback(() => {
+    resetUnavailableThread();
     session?.socket.emit('clear_session');
     session?.socket.disconnect();
     setIdToResume(undefined);
