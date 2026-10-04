@@ -3,11 +3,15 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { RecoilRoot } from 'recoil';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import Home from '@/pages/Home';
 import ThreadPage from '@/pages/Thread';
 
 import { unavailableThreadIdState } from '@chainlit/react-client';
 
-const { mockThreadId } = vi.hoisted(() => ({ mockThreadId: vi.fn() }));
+const { mockThreadId, mockClear } = vi.hoisted(() => ({
+  mockThreadId: vi.fn(),
+  mockClear: vi.fn()
+}));
 
 vi.mock('@chainlit/react-client', async () => {
   const { atom } = await vi.importActual<typeof import('recoil')>('recoil');
@@ -18,7 +22,8 @@ vi.mock('@chainlit/react-client', async () => {
     }),
     threadHistoryState: atom({ key: 'test-history', default: {} }),
     useConfig: () => ({ config: { threadResumable: true } }),
-    useChatMessages: () => ({ threadId: mockThreadId() })
+    useChatMessages: () => ({ threadId: mockThreadId() }),
+    useChatInteract: () => ({ clear: mockClear })
   };
 });
 vi.mock('pages/Page', () => ({
@@ -33,16 +38,17 @@ vi.mock('@/components/AutoResumeThread', () => ({
 vi.mock('@/components/Loader', () => ({ Loader: () => <div>Loading</div> }));
 vi.mock('@/components/chat', () => ({ default: () => <div>Chat input</div> }));
 
-function showThread(unavailableId?: string) {
+function showThread(unavailableId?: string, path = '/thread/old') {
   render(
     <RecoilRoot
       initializeState={({ set }) =>
         set(unavailableThreadIdState, unavailableId)
       }
     >
-      <MemoryRouter initialEntries={['/thread/old']}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/thread/:id" element={<ThreadPage />} />
+          <Route path="/thread/:id?" element={<ThreadPage />} />
+          <Route path="/" element={<Home />} />
         </Routes>
       </MemoryRouter>
     </RecoilRoot>
@@ -50,7 +56,10 @@ function showThread(unavailableId?: string) {
 }
 
 describe('ThreadPage unavailable profile fallback', () => {
-  beforeEach(() => mockThreadId.mockReturnValue(undefined));
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockThreadId.mockReturnValue(undefined);
+  });
 
   it('shows private history without a loading loop or chat input', () => {
     showThread('old');
@@ -71,5 +80,25 @@ describe('ThreadPage unavailable profile fallback', () => {
     showThread();
     expect(screen.getByText('Chat input')).toBeInTheDocument();
     expect(screen.queryByText('History old')).not.toBeInTheDocument();
+  });
+
+  it('does not treat the optional route without an id as unavailable', () => {
+    showThread(undefined, '/thread');
+    expect(screen.getByText('Chat input')).toBeInTheDocument();
+    expect(screen.queryByText(/History/)).not.toBeInTheDocument();
+    expect(mockClear).not.toHaveBeenCalled();
+  });
+
+  it.each(['/', '/thread'])(
+    'clears an unavailable session before chatting at %s',
+    (path) => {
+      showThread('old', path);
+      expect(mockClear).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('does not clear a normal session when returning home', () => {
+    showThread(undefined, '/');
+    expect(mockClear).not.toHaveBeenCalled();
   });
 });

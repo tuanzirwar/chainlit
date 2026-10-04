@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -126,3 +126,86 @@ async def test_readonly_disconnect_does_not_persist_over_old_thread(monkeypatch)
     persist.assert_not_called()
     end.assert_not_called()
     session.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler", "args"),
+    [
+        ("stop", ()),
+        ("message", ({},)),
+        ("edit_message", ({},)),
+        ("message_favorite", ({},)),
+        ("window_message", ({},)),
+        ("audio_start", ()),
+        ("audio_chunk", ({},)),
+        ("audio_end", ()),
+        ("change_settings", ({"temperature": 1},)),
+        ("edit_settings", ({"temperature": 1},)),
+    ],
+)
+async def test_readonly_session_rejects_mutating_events(
+    monkeypatch, mock_session_factory, handler, args
+):
+    session = mock_session_factory(unavailable_chat_profile="Deleted profile")
+    session.current_task = None
+    init = Mock()
+    monkeypatch.setattr(socket.WebsocketSession, "get", lambda _: session)
+    monkeypatch.setattr(socket.WebsocketSession, "require", lambda _: session)
+    monkeypatch.setattr(socket, "init_ws_context", init)
+    await getattr(socket, handler)("sid", *args)
+    init.assert_not_called()
+    assert session.current_task is None
+    assert session.chat_settings == {}
+
+
+def test_mock_session_factory_preserves_unavailable_profile(mock_session_factory):
+    assert mock_session_factory().unavailable_chat_profile is None
+    assert (
+        mock_session_factory(
+            unavailable_chat_profile="Deleted profile"
+        ).unavailable_chat_profile
+        == "Deleted profile"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("unavailable", "owns_session", "status"),
+    [(True, True, 409), (True, False, 401), (False, True, 200)],
+)
+async def test_http_action_respects_readonly_and_ownership(
+    monkeypatch, mock_session_factory, unavailable, owns_session, status
+):
+    import importlib
+
+    from fastapi import HTTPException
+
+    from chainlit.server import call_action
+    from chainlit.types import CallActionRequest
+
+    session = mock_session_factory(
+        unavailable_chat_profile="Deleted profile" if unavailable else None
+    )
+    callback = AsyncMock(return_value="ok")
+    session.get_config.return_value = SimpleNamespace(
+        code=SimpleNamespace(action_callbacks={"test": callback})
+    )
+    monkeypatch.setattr(socket.WebsocketSession, "get_by_id", lambda _: session)
+    context_module = importlib.import_module("chainlit.context")
+    monkeypatch.setattr(
+        context_module, "init_ws_context", lambda _: SimpleNamespace(session=session)
+    )
+    payload = CallActionRequest(
+        sessionId=session.id, action={"name": "test", "payload": {}}
+    )
+    user = session.user if owns_session else SimpleNamespace(identifier="other")
+    if status == 200:
+        response = await call_action(payload, user)
+        assert response.status_code == 200
+        callback.assert_awaited_once()
+    else:
+        with pytest.raises(HTTPException) as error:
+            await call_action(payload, user)
+        assert error.value.status_code == status
+        callback.assert_not_called()

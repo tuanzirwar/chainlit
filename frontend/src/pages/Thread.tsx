@@ -7,6 +7,7 @@ import Page from 'pages/Page';
 import {
   threadHistoryState,
   unavailableThreadIdState,
+  useChatInteract,
   useChatMessages,
   useConfig
 } from '@chainlit/react-client';
@@ -27,7 +28,12 @@ export default function ThreadPage() {
 
   const isCurrentThread = threadId === id;
   const unavailableThreadId = useRecoilValue(unavailableThreadIdState);
-  const isUnavailableThread = unavailableThreadId === id;
+  const isUnavailableThread = !!id && unavailableThreadId === id;
+  const { clear } = useChatInteract();
+
+  useEffect(() => {
+    if (!id && unavailableThreadId) clear();
+  }, [id, unavailableThreadId, clear]);
 
   useEffect(() => {
     setThreadHistory((prev) => {
